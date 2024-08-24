@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Geofencing Attendance Tracker (Debug)</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 0; padding: 20px; }
+        #map-container { height: 100vh; width: 100%; }
+        #status, #debug { margin-top: 20px; font-weight: bold; }
+        .popup { display: none; position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%);
+                 background: white; padding: 20px; border: 1px solid #ccc; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
+    </style>
+</head>
+<body>
+    <h1>Geofencing Attendance Tracker</h1>
+    <div id="map-container"></div>
+    <div id="status">Status: Initializing...</div>
+    <div id="debug">Debug: Waiting for map to load...</div>
+    <div id="attendancePopup" class="popup">
+        <h2>Attendance Marked</h2>
+        <p>You've entered the attendance zone. Your attendance has been marked.</p>
+        <button onclick="closePopup()">Close</button>
+    </div>
+
+    <script>
+        let map;
+        const geofenceRadius = 100; // meters
+        let isInsideGeofence = false;
+        let attendanceMarked = false;
+        let userPin;
+
+        // Geofence centers in decimal format
+        const geofenceCenters = [
+            { latitude: 28.63360933855292, longitude: 77.44760760936055 }, // Original location
+            { latitude: 28.627585, longitude: 77.337361 } // New location (28°37'39.3"N 77°20'14.5"E)
+        ];
+
+        function debug(message) {
+            document.getElementById('debug').innerHTML += "<br>" + message;
+        }
+
+        function initMap() {
+            debug("Initializing map...");
+            map = new Microsoft.Maps.Map(document.getElementById('map-container'), {
+                credentials: 'ArSGwElpgs65UXUwCnZ4ibhLzkmxuScTxz0rCq_kgJy35pa2tSq229GIMzMPVQ8P',
+                center: new Microsoft.Maps.Location(geofenceCenters[0].latitude, geofenceCenters[0].longitude),
+                zoom: 15
+            });
+
+            // Load the SpatialMath module
+            Microsoft.Maps.loadModule('Microsoft.Maps.SpatialMath', function () {
+                debug("Map initialized. Adding geofences...");
+
+                // Add geofences for both locations
+                geofenceCenters.forEach(center => {
+                    const geofenceCircle = createCircle(center, geofenceRadius, 36);
+                    const geofencePolygon = new Microsoft.Maps.Polygon(geofenceCircle, {
+                        fillColor: new Microsoft.Maps.Color(100,255,160,122),
+                        strokeColor: new Microsoft.Maps.Color(200, 255,0,0),
+                        strokeThickness: 2
+                    });
+                    map.entities.push(geofencePolygon);
+                });
+
+                debug("Geofences added. Starting location tracking...");
+
+                // Start watching position
+                if ("geolocation" in navigator) {
+                    navigator.geolocation.watchPosition(updatePosition, positionError, {
+                        enableHighAccuracy: true,
+                        timeout: 10000,
+                        maximumAge: 0
+                    });
+                } else {
+                    debug("Geolocation is not supported by this browser.");
+                }
+            });
+        }
+
+        function createCircle(center, radius, points) {
+            const locations = [];
+            const R = 6371e3; // Earth radius in meters
+            const lat = center.latitude * Math.PI / 180;
+            const lon = center.longitude * Math.PI / 180;
+
+            for (let i = 0; i < points; i++) {
+                const angle = (i * 360 / points) * Math.PI / 180;
+                const latOffset = Math.asin(Math.sin(lat) * Math.cos(radius / R) + Math.cos(lat) * Math.sin(radius / R) * Math.cos(angle));
+                const lonOffset = lon + Math.atan2(Math.sin(angle) * Math.sin(radius / R) * Math.cos(lat), Math.cos(radius / R) - Math.sin(lat) * Math.sin(latOffset));
+                locations.push(new Microsoft.Maps.Location(latOffset * 180 / Math.PI, lonOffset * 180 / Math.PI));
+            }
+
+            return locations;
+        }
+
+        function updatePosition(position) {
+            const userLocation = new Microsoft.Maps.Location(position.coords.latitude, position.coords.longitude);
+            debug(`User location updated: ${position.coords.latitude}, ${position.coords.longitude}`);
+            
+            if (!userPin) {
+                userPin = new Microsoft.Maps.Pushpin(userLocation, { color: 'blue' });
+                map.entities.push(userPin);
+                debug("User pin added to map.");
+            } else {
+                userPin.setLocation(userLocation);
+            }
+            
+            let insideAnyGeofence = false;
+
+            geofenceCenters.forEach((center, index) => {
+                const distance = Microsoft.Maps.SpatialMath.getDistanceTo(
+                    new Microsoft.Maps.Location(center.latitude, center.longitude),
+                    userLocation,
+                    Microsoft.Maps.SpatialMath.DistanceUnits.Meters
+                );
+
+                debug(`Distance to geofence center ${index + 1}: ${distance.toFixed(2)} meters`);
+                
+                if (distance <= geofenceRadius) {
+                    insideAnyGeofence = true;
+                    if (!isInsideGeofence && !attendanceMarked) {
+                        markAttendance(index + 1);
+                    }
+                }
+            });
+
+            if (insideAnyGeofence) {
+                document.getElementById('status').textContent = "Status: Inside attendance zone";
+                isInsideGeofence = true;
+            } else {
+                document.getElementById('status').textContent = "Status: Outside attendance zone";
+                isInsideGeofence = false;
+            }
+        }
+
+        function positionError(error) {
+            debug(`Position error: ${error.message}`);
+            document.getElementById('status').textContent = "Error: " + error.message;
+        }
+
+        function markAttendance(zoneIndex) {
+            attendanceMarked = true;
+            document.getElementById('attendancePopup').style.display = 'block';
+            debug(`Attendance marked in zone ${zoneIndex}.`);
+            // Here you would typically send an API request to record the attendance on a server
+        }
+
+        function closePopup() {
+            document.getElementById('attendancePopup').style.display = 'none';
+        }
+
+        // Ensure the Bing Maps script is loaded
+        function loadBingMapsScript() {
+            const script = document.createElement('script');
+            script.type = 'text/javascript';
+            script.src = `https://www.bing.com/api/maps/mapcontrol?key=ArSGwElpgs65UXUwCnZ4ibhLzkmxuScTxz0rCq_kgJy35pa2tSq229GIMzMPVQ8P&callback=initMap`;
+            script.async = true;
+            script.defer = true;
+            document.body.appendChild(script);
+        }
+
+        // Load the Bing Maps script after the page has loaded
+        window.onload = loadBingMapsScript;
+    </script>
+</body>
+</html>
